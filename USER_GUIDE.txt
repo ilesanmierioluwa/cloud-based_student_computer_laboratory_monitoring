@@ -1,0 +1,833 @@
+================================================================================
+CLOUD-BASED STUDENT COMPUTER LABORATORY MONITORING AND MANAGEMENT SYSTEM
+USER GUIDE
+================================================================================
+
+Version: 1.0.0
+Date: August 2026
+Stack: Node.js + Express + Socket.IO + MongoDB Atlas + React (Vite)
+================================================================================
+
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+  1. WHAT IS THIS SYSTEM?
+  2. SYSTEM ARCHITECTURE (How it works)
+  3. PRE-SEEDED DATA (What's already in the database)
+  4. HOW TO START THE SYSTEM
+  5. HOW TO LOG IN
+  6. HOW TO USE EACH PAGE
+     6.1  Dashboard
+     6.2  Labs
+     6.3  Machines
+     6.4  Attendance
+     6.5  Policies
+     6.6  Violations
+     6.7  Reports
+     6.8  User Management
+  7. HOW TO ADD MORE DATA
+     7.1  Adding a Technician or Lecturer
+     7.2  Adding a Laboratory
+     7.3  Adding a Machine
+     7.4  Adding a Student
+     7.5  Starting a Student Session
+     7.6  Creating a Policy
+  8. REAL-TIME FEATURES
+  9. THE MONITORING AGENT (For Lab PCs)
+  10. SECURITY
+  11. TROUBLESHOOTING
+
+
+================================================================================
+1. WHAT IS THIS SYSTEM?
+================================================================================
+
+This is a web-based system that allows university administrators, lab
+technicians, and lecturers to monitor and manage computer laboratories
+remotely from a cloud dashboard.
+
+You can:
+  - See which lab PCs are online, in-use, offline, or faulty — LIVE.
+  - Track student login/logout automatically (attendance taking).
+  - Block prohibited applications (e.g., games, cheating tools).
+  - Detect unauthorized USB devices being plugged in.
+  - Send remote commands to lab PCs (lock, unlock, message, shutdown).
+  - View reports: lab utilization, violation trends, attendance exports.
+  - Get real-time alerts when policy violations happen.
+
+
+================================================================================
+2. SYSTEM ARCHITECTURE (How it works)
+================================================================================
+
+There are THREE parts working together:
+
+  [LAB PCs] ──── Agent software installed on each PC ────┐
+                                                          │  (Socket.IO + REST)
+                                                          ▼
+  [CLOUD SERVER] ─── Node.js + Express API + Socket.IO ─── MongoDB Atlas
+                                                          │
+                                                          ▼
+  [WEB DASHBOARD] ─── React app used by admins, technicians, lecturers
+
+  - LAB PCs run a small "Agent" program that reports CPU usage, RAM usage,
+    the active foreground application, USB events, etc. every few seconds.
+
+  - The CLOUD SERVER receives this data via WebSocket (Socket.IO), stores
+    historical telemetry in MongoDB, and pushes live updates to the dashboard.
+
+  - The WEB DASHBOARD is a React single-page application that shows
+    everything in real-time through charts, status grids, and alert panels.
+
+  - MongoDB Atlas is the cloud database — you don't need to install MongoDB.
+    Your connection string is already configured.
+
+
+================================================================================
+3. PRE-SEEDED DATA (What's already in the database)
+================================================================================
+
+When you first start the server, the system automatically creates some
+starter data so you can immediately explore the dashboard. Here is
+everything that exists in your database right now:
+
+--------------------------------------------------------------------------------
+3.1 ADMIN USER
+--------------------------------------------------------------------------------
+
+  Full Name:  System Administrator
+  Staff ID:   ADMIN001
+  Email:      admin@labmonitoring.com
+  Password:   admin123
+  Role:       admin (has full control over everything)
+
+  You use this account to log into the dashboard.
+
+--------------------------------------------------------------------------------
+3.2 LABORATORY
+--------------------------------------------------------------------------------
+
+  Name:         Computer Lab 1
+  Location:     Block A, Room 101
+  Capacity:     40 machines
+  Machines:     1 assigned (1 online)
+
+--------------------------------------------------------------------------------
+3.3 MACHINES (Lab Computers)
+--------------------------------------------------------------------------------
+
+  Machine 1:
+    Tag:        LAB1-PC01
+    Hostname:   LAB1-PC01
+    IP Address: 192.168.1.101
+    OS:         Windows 11
+    Status:     offline
+    Specs:      Intel i7, 16GB RAM, 512GB SSD
+
+  Machine 2:
+    Tag:        TEST-PC99
+    Hostname:   test
+    Status:     online
+
+--------------------------------------------------------------------------------
+3.4 STUDENT
+--------------------------------------------------------------------------------
+
+  Name:           John Doe
+  Matric Number:  CSC/2020/001
+  Department:     Computer Science
+  Level:          400
+
+  This student was auto-created when a session was started with their
+  matric number. If you start a session with a matric number that doesn't
+  exist yet, the system creates the student automatically.
+
+--------------------------------------------------------------------------------
+3.5 POLICIES (Access Control Rules)
+--------------------------------------------------------------------------------
+
+  Policy 1:  Block Chrome
+    Type:       blocked-app (blocks a specific application)
+    Rule:       Process name "chrome.exe" is blocked
+    Severity:   medium
+    Status:     Active
+
+  When the agent detects chrome.exe running, it reports a violation.
+  (On the real lab PCs, the agent would also attempt to kill the process.)
+
+--------------------------------------------------------------------------------
+3.6 VIOLATION LOG (Alerts)
+--------------------------------------------------------------------------------
+
+  Violation 1:
+    Type:       blocked-app
+    Detail:     "chrome.exe detected"
+    Severity:   medium
+    Status:     open (not yet acknowledged or resolved)
+    Detected:   2026-08-04
+    Machine:    LAB1-PC01
+
+  This appears as a red alert on the dashboard. A technician should
+  acknowledge and resolve it.
+
+--------------------------------------------------------------------------------
+3.7 ATTENDANCE RECORD
+--------------------------------------------------------------------------------
+
+  Record 1:
+    Student:    John Doe (CSC/2020/001)
+    Lab:        Computer Lab 1
+    Check In:   2026-08-04 17:53:13 UTC
+    Check Out:  2026-08-04 17:53:15 UTC
+    Status:     present
+
+  This was automatically logged when a session was started and ended
+  for John Doe on LAB1-PC01 in Computer Lab 1.
+
+--------------------------------------------------------------------------------
+3.8 AUDIT LOGS (Accountability Trail)
+--------------------------------------------------------------------------------
+
+  The following actions have been logged (most recent first):
+
+  1. System Administrator → UPDATE_MACHINE (assigned PC to lab)
+  2. System Administrator → ISSUE_COMMAND (sent message to PC)
+  3. System Administrator → CREATE_POLICY (created "Block Chrome")
+  4. System Administrator → CREATE_STUDENT (created John Doe)
+  5. System Administrator → CREATE_LAB (created Computer Lab 1)
+
+  Every admin and technician action is automatically recorded for
+  accountability. This matches the abstract's security requirement.
+
+--------------------------------------------------------------------------------
+3.9 COMMANDS
+--------------------------------------------------------------------------------
+
+  No pending commands. All commands issued have been delivered or executed.
+
+
+================================================================================
+4. HOW TO START THE SYSTEM
+================================================================================
+
+The system has TWO parts that need to run at the same time:
+
+STEP 1: Start the Backend Server
+---------------------------------
+  cd server
+  npm install        (only needed the first time)
+  npm run dev        (or: node src/server.js)
+
+  You should see:
+    MongoDB connected: ac-mo1yjio-shard-00-XX.vbbfkkb.mongodb.net
+    Default admin user created (admin@labmonitoring.com / admin123)
+    Cron jobs initialized
+    Server running on port 5000 in development mode
+
+  The server will be accessible at: http://localhost:5000
+
+STEP 2: Start the Frontend Dashboard
+--------------------------------------
+  cd dashboard
+  npm install        (only needed the first time)
+  npm run dev
+
+  You should see:
+    VITE vX.X.X  ready in XXX ms
+    ➜  Local:   http://localhost:5173/
+
+  Open your browser and go to: http://localhost:5173
+
+IMPORTANT: Both terminals must stay running. Use two terminal windows
+or tabs.
+
+
+================================================================================
+5. HOW TO LOG IN
+================================================================================
+
+  1. Go to http://localhost:5173 in your browser.
+  2. You will see the login page with "Cloud Lab Monitoring System".
+  3. Enter:
+     Email:    admin@labmonitoring.com
+     Password: admin123
+  4. Click "Login".
+
+  If successful, you will be taken to the Dashboard Overview page.
+  The navigation bar at the top shows all available pages based on
+  your role.
+
+  ROLES AND WHAT THEY CAN DO:
+  ┌─────────────┬──────────────────────────────────────────────────┐
+  │ Role        │ Permissions                                      │
+  ├─────────────┼──────────────────────────────────────────────────┤
+  │ admin       │ Everything: manage users, labs, machines,        │
+  │             │ policies, view all reports, issue commands       │
+  ├─────────────┼──────────────────────────────────────────────────┤
+  │ technician  │ View labs/machines, issue commands, acknowledge  │
+  │             │ alerts, manage students, view attendance         │
+  ├─────────────┼──────────────────────────────────────────────────┤
+  │ lecturer    │ View dashboard/machines/attendance, export       │
+  │             │ reports (read-only)                              │
+  └─────────────┴──────────────────────────────────────────────────┘
+
+
+================================================================================
+6. HOW TO USE EACH PAGE
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1 DASHBOARD (Home page — /)
+--------------------------------------------------------------------------------
+
+  WHAT YOU SEE:
+  - 6 summary cards: Total Machines, Online, Active Sessions,
+    Open Violations, Labs, Today's Attendance
+  - "Live" / "Disconnected" indicator — shows if the real-time
+    socket connection is active
+  - Recent alerts list — shows the latest policy violations
+  - Quick links to other pages
+
+  WHAT IT MEANS:
+  - Total Machines:  Count of all registered lab PCs in the system
+  - Online:          Machines with active heartbeat (agent connected)
+  - Active Sessions: Students currently logged into machines
+  - Open Violations: Unresolved policy violation alerts
+  - Labs:            Number of labs configured
+  - Today Attendance: Students checked in today
+
+--------------------------------------------------------------------------------
+6.2 LABS (Manage Laboratories — /labs)
+--------------------------------------------------------------------------------
+
+  WHAT YOU SEE:
+  - A grid of lab cards showing name, location, capacity, and
+    how many machines are assigned + online
+  - "Add Lab" button to create a new lab
+  - "Delete" button on each card (admin only)
+
+  HOW TO ADD A LAB:
+  1. Click "Add Lab"
+  2. Fill in: Lab Name, Location, Capacity (number of PCs)
+  3. Click "Create Lab"
+  4. The new lab appears in the grid
+
+--------------------------------------------------------------------------------
+6.3 MACHINES (View & Control Lab PCs — /machines)
+--------------------------------------------------------------------------------
+
+  WHAT YOU SEE:
+  - A filter dropdown to view machines from a specific lab
+  - A grid of machine cards, each colored by status:
+    █ Green  = in-use (student logged in)
+    █ Blue   = online (agent connected, no student using it)
+    █ Grey   = offline (heartbeat lost)
+    █ Yellow = locked / idle
+    █ Red    = fault (offline too long during lab hours)
+  - Live CPU %, RAM %, and foreground app from each machine
+  - Click a machine card to open the command panel
+
+  HOW TO SEND A REMOTE COMMAND:
+  1. Click any machine card
+  2. A modal pops up with command options
+  3. Type a message (for "message" command) — optional
+  4. Click the desired command:
+     - Send Message: Shows a pop-up on the lab PC
+     - Lock:        Locks the machine's screen
+     - Unlock:      Unlocks the screen
+     - Shutdown:    Shuts down the machine (admin only)
+     - Restart:     Restarts the machine
+
+  COMMAND STATUS INDICATORS:
+  - pending:   Command is queued (machine is offline)
+  - delivered: Agent received the command
+  - executed:  Agent successfully ran the command
+  - failed:    Command could not execute
+
+--------------------------------------------------------------------------------
+6.4 ATTENDANCE (View & Export Attendance — /attendance)
+--------------------------------------------------------------------------------
+
+  WHAT YOU SEE:
+  - Filter by Lab and/or Date
+  - A table showing:
+    - Date, Student Name, Matric Number, Lab, Check-in Time,
+      Check-out Time, Status (present / left-early / no-checkout)
+  - "View History" button to see a specific student's full attendance
+  - Export buttons: CSV (spreadsheet) and PDF
+
+  HOW ATTENDANCE WORKS:
+  - When a student starts a session → check-in is auto-logged
+  - When the session ends → check-out is auto-logged
+  - If the agent crashes or PC loses power:
+    → a cron job (every 5 minutes) auto-closes stale sessions
+      and marks attendance as "no-checkout"
+  - Admins/technicians can manually override records if needed
+
+  HOW TO EXPORT ATTENDANCE:
+  1. Filter by lab and/or date
+  2. Click "Export CSV" to download a spreadsheet
+  3. Click "Export PDF" to download a formatted document
+
+  CSV FORMAT (when opened in Excel):
+  ┌────────────┬──────────────┬──────────────┬──────────────┬───┐
+  │ Date       │ Student Name │ Matric No.   │ Lab          │...│
+  ├────────────┼──────────────┼──────────────┼──────────────┼───┤
+  │ 2026-08-04 │ John Doe     │ CSC/2020/001 │ Computer Lab │...│
+  └────────────┴──────────────┴──────────────┴──────────────┴───┘
+
+--------------------------------------------------------------------------------
+6.5 POLICIES (Access Control Rules — /policies)
+--------------------------------------------------------------------------------
+
+  WHAT YOU SEE:
+  - A list of all active/inactive policies
+  - Each policy shows:
+    - Name, type, severity badge, active/inactive status
+    - The specific rule (e.g., process name to block)
+  - "Add Policy" button to create new rules
+  - "Enable/Disable" and "Delete" buttons
+
+  POLICY TYPES:
+  ┌──────────────────┬──────────────────────────────────────────┐
+  │ Type             │ What it does                             │
+  ├──────────────────┼──────────────────────────────────────────┤
+  │ blocked-app      │ Blocks a specific program (e.g.,         │
+  │                  │ game.exe, cheatengine.exe)               │
+  ├──────────────────┼──────────────────────────────────────────┤
+  │ blocked-website  │ Flags browser window titles matching     │
+  │                  │ blocked domains (stretch goal)           │
+  ├──────────────────┼──────────────────────────────────────────┤
+  │ usb-restriction  │ Detects and flags unauthorized USB       │
+  │                  │ storage devices                          │
+  ├──────────────────┼──────────────────────────────────────────┤
+  │ time-restriction │ Only allows lab usage during specified   │
+  │                  │ hours (e.g., 8 AM - 6 PM)               │
+  ├──────────────────┼──────────────────────────────────────────┤
+  │ idle-timeout     │ Auto-ends session after N minutes of     │
+  │                  │ no keyboard/mouse activity               │
+  └──────────────────┴──────────────────────────────────────────┘
+
+  HOW TO CREATE A BLOCKED APP POLICY:
+  1. Click "Add Policy"
+  2. Name: "Block Notepad"
+  3. Description: "Prevent students from using Notepad"
+  4. Type: blocked-app
+  5. Process Name: notepad.exe
+  6. Severity: medium
+  7. Click "Create Policy"
+
+  VIOLATION DEBOUNCING:
+  If the same app is detected repeatedly within 5 minutes, the system
+  bumps an "occurrenceCount" instead of creating duplicate alerts.
+  This prevents alert spam.
+
+--------------------------------------------------------------------------------
+6.6 VIOLATIONS (View Alerts — /violations)
+--------------------------------------------------------------------------------
+
+  WHAT YOU SEE:
+  - A list of all policy violations/alerts
+  - Each shows: severity badge, violation type, detail, machine,
+    detection time, occurrence count, and status
+
+  STATUS FLOW:
+    open ──────────> acknowledged ──────────> resolved
+    (new alert)     (tech saw it)            (fixed)
+
+  HOW TO HANDLE A VIOLATION:
+  1. See a new "open" alert
+  2. Click "Acknowledge" — status changes to "acknowledged"
+  3. After investigating/resolving the issue, click "Resolve"
+  4. Status changes to "resolved" (green)
+
+  Real-time: New violations appear automatically on the dashboard
+  without refreshing the page.
+
+--------------------------------------------------------------------------------
+6.7 REPORTS (Analytics Charts — /reports)
+--------------------------------------------------------------------------------
+
+  WHAT YOU SEE:
+
+  1. Summary Stats:
+     - Active Sessions, Today's Attendance, Lab Utilization %,
+       Open Violations
+
+  2. Sessions Over Time (line chart):
+     - Shows how many sessions were created each day
+     - Use the dropdown to see last 7 or 30 days
+
+  3. Violation Trends (bar chart):
+     - Shows violation counts over time by date
+
+  4. Machine Utilization (table):
+     - Shows which machines are most/least used
+     - Helps decide which PCs need maintenance or replacement
+
+  All charts are powered by Recharts and update when you change
+  the time period filter.
+
+--------------------------------------------------------------------------------
+6.8 USER MANAGEMENT (Admin Only — /users)
+--------------------------------------------------------------------------------
+
+  WHAT YOU SEE:
+  - A table of all system users with name, staff ID, email, role, status
+
+  HOW TO CREATE A USER:
+  1. Click "Add User"
+  2. Fill in: Full Name, Staff ID, Email, Password, Role
+  3. Click "Create User"
+  4. The new user can now log in
+
+  HOW TO DEACTIVATE A USER:
+  1. Click "Deactivate" on their row
+  2. Confirm the action
+  3. They can no longer log in (their account is soft-deleted)
+
+  You cannot deactivate your own account (the button won't appear
+  for your own row).
+
+
+================================================================================
+7. HOW TO ADD MORE DATA
+================================================================================
+
+All of the following can be done through the dashboard UI, or via
+the REST API directly (useful for testing or bulk import).
+
+--------------------------------------------------------------------------------
+7.1 Adding a Technician or Lecturer
+--------------------------------------------------------------------------------
+
+  UI Method:
+    Go to Users page → Click "Add User" → Fill form → Create
+
+  API Method:
+    POST /api/auth/register
+    Headers: Authorization: Bearer <admin-JWT-token>
+    Body: {
+      "fullName": "Jane Smith",
+      "staffId": "TECH002",
+      "email": "jane@university.edu",
+      "password": "securepass123",
+      "role": "technician"
+    }
+
+  The technician can now log in and manage their assigned labs.
+
+--------------------------------------------------------------------------------
+7.2 Adding a Laboratory
+--------------------------------------------------------------------------------
+
+  UI Method:
+    Go to Labs page → Click "Add Lab" → Fill form → Create
+
+  API Method:
+    POST /api/labs
+    Headers: Authorization: Bearer <token>
+    Body: {
+      "name": "Computer Lab 2",
+      "location": "Block B, Room 205",
+      "capacity": 30
+    }
+
+--------------------------------------------------------------------------------
+7.3 Adding a Machine
+--------------------------------------------------------------------------------
+
+  Machines auto-register when the agent runs (recommended), but you
+  can pre-register them manually:
+
+  API Method:
+    POST /api/machines/register
+    Headers:
+      Content-Type: application/json
+      x-agent-token: agent-registration-token-default-change-me
+    Body: {
+      "machineTag": "LAB1-PC02",
+      "hostname": "LAB1-PC02",
+      "macAddress": "AA:BB:CC:DD:EE:02",
+      "ipAddress": "192.168.1.102",
+      "os": "Windows 11",
+      "agentVersion": "1.0.0",
+      "specs": { "cpu": "Intel i5", "ram": "8GB", "disk": "256GB SSD" }
+    }
+
+  IMPORTANT: After creating a machine, assign it to a lab using
+  the dashboard (Machines page → click the machine → or use the
+  API PUT /api/machines/:id with labId in the body).
+
+  Without a lab assignment, attendance records won't be created
+  for sessions on that machine.
+
+--------------------------------------------------------------------------------
+7.4 Adding a Student
+--------------------------------------------------------------------------------
+
+  Students are auto-created when a session starts with a new matric
+  number. You can also pre-register them:
+
+  UI/API Method:
+    POST /api/students
+    Headers: Authorization: Bearer <token>
+    Body: {
+      "fullName": "Alice Johnson",
+      "matricNumber": "CSC/2021/015",
+      "department": "Computer Science",
+      "level": "300"
+    }
+
+--------------------------------------------------------------------------------
+7.5 Starting a Student Session
+--------------------------------------------------------------------------------
+
+  In production, the Agent handles this (a login kiosk on each PC).
+  For testing, use the API:
+
+    POST /api/sessions/start
+    Headers: x-agent-token: agent-registration-token-default-change-me
+    Body: {
+      "machineId": "<machine_mongo_id>",
+      "matricNumber": "CSC/2020/001",
+      "courseCode": "CSC401",
+      "purpose": "Programming assignment"
+    }
+
+  What happens automatically:
+  1. Student is found or created
+  2. Session document is created (status: active)
+  3. Machine status changes to "in-use"
+  4. Attendance record is created (checkInTime = now)
+  5. Dashboard is updated in real-time via Socket.IO
+
+  Ending a session (API):
+    POST /api/sessions/:sessionId/end
+    Headers: x-agent-token: agent-registration-token-default-change-me
+
+  What happens:
+  1. endTime and durationSeconds are set
+  2. Machine status changes back to "online"
+  3. Attendance checkOutTime is recorded
+  4. Dashboard updates in real-time
+
+  Force-ending (from dashboard, by admin/technician):
+    POST /api/sessions/:sessionId/force-end
+    Headers: Authorization: Bearer <token>
+
+  This marks the session as "forcefully-terminated" and sets
+  attendance status to "left-early".
+
+--------------------------------------------------------------------------------
+7.6 Creating a Policy
+--------------------------------------------------------------------------------
+
+  API Method:
+    POST /api/policies
+    Headers: Authorization: Bearer <token>
+    Body: {
+      "name": "Block USB Storage",
+      "description": "Prevent mass storage devices",
+      "type": "usb-restriction",
+      "rule": { "usbClass": "mass-storage" },
+      "severity": "high",
+      "isActive": true
+    }
+
+  The policy is immediately synced to all connected agents via
+  Socket.IO so enforcement starts within seconds.
+
+
+================================================================================
+8. REAL-TIME FEATURES
+================================================================================
+
+The dashboard uses Socket.IO to update without page refreshes:
+
+  ┌───────────────────────────┬─────────────────────────────────┐
+  │ Event                     │ What happens on the dashboard    │
+  ├───────────────────────────┼─────────────────────────────────┤
+  │ machine:status-changed    │ A machine card changes color     │
+  │ session:started           │ Active sessions count goes up   │
+  │ session:ended             │ Active sessions count goes down │
+  │ telemetry:live            │ CPU/RAM % updates on machine    │
+  │                           │ card (every 15 seconds)         │
+  │ alert:new                 │ New violation appears in alert  │
+  │                           │ list and Violations page        │
+  │ alert:updated             │ Violation status changes        │
+  │ command:status-changed    │ Command completes               │
+  └───────────────────────────┴─────────────────────────────────┘
+
+  The "Live" / "Disconnected" indicator at the top of the Dashboard
+  page shows whether this real-time connection is active (green) or
+  broken (red).
+
+
+================================================================================
+9. THE MONITORING AGENT (For Lab PCs)
+================================================================================
+
+The agent is the software installed on each lab computer. It:
+
+  - Registers the machine with the server on first run
+  - Sends heartbeat every 10 seconds (keeps status as "online")
+  - Collects CPU/RAM/Disk/Network data every 15 seconds
+  - Detects the foreground/active application
+  - Checks running processes against blocked-app policies
+  - Monitors USB insert/remove events
+  - Listens for and executes remote commands (lock, message, etc.)
+  - Buffers data locally if the network drops and syncs on reconnect
+
+  HOW TO INSTALL THE AGENT (on a lab PC):
+
+  1. Copy the /agent folder to the lab PC
+  2. Edit agent/.env:
+     - Set SERVER_URL to the server's actual URL/IP
+     - Set AGENT_TOKEN to your registration token
+     - Set MACHINE_TAG to a unique tag (e.g., "LAB1-PC05")
+
+  3. Run:
+     cd agent
+     npm install
+     node src/index.js
+
+  4. For production (auto-start on boot):
+     - Use node-windows to register as a Windows service
+     - Or use PM2: pm2 start src/index.js --name lab-agent
+                    pm2 save
+                    pm2 startup
+
+  LIMITATIONS:
+  - The "usb-detection" and "active-win" npm packages require
+    native Windows dependencies and don't work on Linux/Mac.
+    On Linux, USB detection and precise foreground app detection
+    are gracefully disabled with console warnings.
+  - Remote lock/unlock: On Windows, lock uses the OS lock screen
+    (rundll32.exe). True remote unlock is not possible on Windows
+    without credential entry — this is a documented limitation.
+
+
+================================================================================
+10. SECURITY
+================================================================================
+
+  MEASURES IN PLACE:
+
+  - All API routes require JWT authentication (except agent endpoints
+    which use a pre-shared registration token).
+  - Passwords are hashed with bcrypt (12 salt rounds) — never stored
+    in plain text.
+  - Rate limiting on auth endpoints: 20 attempts per 15 minutes.
+  - Account lockout after 5 failed login attempts (locked for 15 min).
+  - JWT access tokens expire in 15 minutes; refresh tokens last 7 days.
+  - Silent token refresh on the dashboard — users don't get logged out
+    mid-session.
+  - Input validation with express-validator on all mutating routes.
+  - Helmet.js sets security headers.
+  - CORS configured to only allow the dashboard origin.
+  - Role checks enforced server-side — never trust the client.
+  - Every admin/technician action is logged to the AuditLog collection.
+  - Agent registration requires a pre-shared token (configurable).
+  - In production, use HTTPS/WSS for all traffic.
+
+  IMPORTANT: Before production deployment, change these values in
+  server/.env:
+    - JWT_ACCESS_SECRET  (use a long random string)
+    - JWT_REFRESH_SECRET (use a different long random string)
+    - AGENT_REGISTRATION_TOKEN (use a strong random token)
+    - CORS_ORIGIN (set to your actual frontend domain)
+
+  Never commit .env files to git. The .gitignore already excludes them.
+
+
+================================================================================
+11. TROUBLESHOOTING
+================================================================================
+
+  PROBLEM:  "MongoDB connection error" on server startup
+  SOLUTION: Check that your MongoDB Atlas IP whitelist includes your
+            current IP address. In Atlas → Network Access → Add IP Address
+            → "Allow Access from Anywhere" or add your specific IP.
+            Verify the MONGODB_URI in server/.env is correct.
+
+  PROBLEM:  Dashboard shows "Loading..." forever
+  SOLUTION: Make sure the backend server is running on port 5000.
+            Check: curl http://localhost:5000/health
+                   Should return {"status":"ok",...}
+
+  PROBLEM:  "Access denied" or "Invalid token" when using dashboard
+  SOLUTION: Your JWT token expired. Log out and log in again.
+            The dashboard has silent refresh but if the refresh token
+            also expired you need to re-authenticate.
+
+  PROBLEM:  Machines show as "offline" even though the agent is running
+  SOLUTION: The agent must send heartbeats. Check agent logs.
+            Make sure the SERVER_URL in agent/.env points to the
+            correct server URL (use the actual IP, not localhost,
+            if the agent is on a different machine).
+
+  PROBLEM:  Port 5000 or 5173 is already in use
+  SOLUTION: Kill the existing process:
+            kill $(lsof -ti:5000)
+            kill $(lsof -ti:5173)
+            Then restart.
+
+  PROBLEM:  Attendance records are empty even after sessions
+  SOLUTION: The machine must be assigned to a lab. Without a labId,
+            attendance records are not created. Assign the machine
+            to a lab via the dashboard or API.
+
+  PROBLEM:  Violations not showing on dashboard
+  SOLUTION: Check that policies are active (isActive: true).
+            The agent must be connected and running the policy engine
+            (it checks processes every 15 seconds with telemetry).
+            Violations are debounced — same violation on same machine
+            within 5 minutes increments occurrenceCount instead of
+            creating a new alert.
+
+  PROBLEM:  CSV export is empty
+  SOLUTION: Filter by date and lab to find records. If no attendance
+            records exist for the selected filters, the CSV will have
+            only headers (which is correct behavior, not an error).
+
+
+================================================================================
+PROJECT FILES REFERENCE
+================================================================================
+
+  /server
+    .env                    — Configuration (DB URI, JWT secrets, ports)
+    src/server.js           — Entry point (connects DB, seed admin, starts)
+    src/app.js              — Express app setup (routes, middleware)
+    src/models/             — 11 Mongoose schemas
+    src/controllers/        — Business logic for each resource
+    src/routes/             — API route definitions
+    src/middleware/         — Auth, audit log, error handling
+    src/sockets/            — Socket.IO handlers (agent + dashboard)
+    src/services/           — Session cleanup, alert emails
+    src/jobs/               — Cron jobs (every 5 min)
+    src/config/             — DB connection, env config, Socket.IO init
+
+  /agent
+    .env                    — Agent config (server URL, machine tag)
+    src/index.js            — Agent entry point
+    src/socketClient.js     — Socket.IO client connection
+    src/commandHandler.js   — Remote command execution
+    src/collectors/         — systemInfo, processMonitor, usbMonitor,
+                              policyEnforcer
+
+  /dashboard
+    src/main.jsx            — React entry (wraps with AuthProvider + Router)
+    src/App.jsx             — Route definitions
+    src/context/            — AuthContext, SocketContext
+    src/services/           — API client (axios), Socket client
+    src/pages/              — 8 page components
+    src/components/         — Layout, ProtectedRoute
+
+
+================================================================================
+END OF USER GUIDE
+================================================================================

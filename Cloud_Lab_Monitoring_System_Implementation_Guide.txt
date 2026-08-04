@@ -1,0 +1,549 @@
+================================================================================
+DESIGN AND IMPLEMENTATION OF A CLOUD-BASED STUDENT COMPUTER LABORATORY
+MONITORING AND MANAGEMENT SYSTEM
+Implementation Instructions / Build Prompt (Node.js + MongoDB stack)
+================================================================================
+
+
+HOW TO USE THIS FILE
+--------------------
+This is a complete implementation outline you can follow step-by-step, or paste
+sections of it as prompts to an AI coding assistant (e.g. Claude, ChatGPT,
+Claude Code) to generate code module-by-module. It is organized so each
+numbered section can be built and tested independently before moving to the
+next. It covers every subsystem mentioned in your abstract:
+
+  1. Session Manager
+  2. Real-Time Monitoring Engine
+  3. Access Control & Policy Engine
+  4. Remote Command Dispatcher
+  5. Attendance Logger
+  6. Reporting & Analytics Engine
+  7. Web-based Admin/Technician/Lecturer Dashboard
+  8. Lightweight Monitoring Agent (installed on lab PCs)
+
+================================================================================
+PART 0 — SYSTEM OVERVIEW & ARCHITECTURE
+================================================================================
+
+0.1 High-level architecture
+----------------------------
+[Lab PC 1]  [Lab PC 2] ... [Lab PC N]
+   |  each runs a lightweight AGENT (Node.js/Electron background process or
+   |  a Windows service written in Node.js using `node-windows`)
+   |
+   |  Agent connects via WebSocket (Socket.IO client) + REST (Axios) to:
+   v
+[CLOUD/CENTRAL SERVER]  (Node.js + Express + Socket.IO)
+   |
+   |-- MongoDB Atlas (or self-hosted MongoDB) — persistent storage
+   |-- Redis (optional, recommended) — active session cache, pub/sub for
+   |         multi-instance Socket.IO scaling
+   |
+   v
+[Web Dashboard] (React/Vue/EJS) used by:
+   - Lab Administrators (full control)
+   - Lab Technicians (monitoring, remote actions)
+   - Lecturers (view-only + attendance reports)
+
+0.2 Suggested tech stack
+------------------------
+- Backend runtime: Node.js (v20 LTS)
+- Framework: Express.js
+- Real-time layer: Socket.IO (agent <-> server, and server <-> dashboard)
+- Database: MongoDB (Mongoose ODM)
+- Auth: JWT (access + refresh tokens), bcrypt for password hashing
+- Agent (on each lab PC): Node.js script packaged with `pkg` or `nexe` into a
+  .exe, OR an Electron background app if you need a system tray icon.
+  Use `systeminformation` npm package to pull CPU/RAM/process/USB data.
+- Process/USB monitoring: `systeminformation`, `active-win` (foreground app),
+  `usb-detection` (USB insert/remove events)
+- Remote lock/unlock on Windows: Node `child_process.exec` calling
+  `rundll32.exe user32.dll,LockWorkStation` (lock) — unlock generally requires
+  Windows credential re-entry (document this as a limitation, or simulate
+  "soft lock" via a full-screen overlay app you control instead of the OS
+  lock screen — this gives you TRUE remote unlock capability, recommended).
+- Scheduled jobs: `node-cron` (e.g., auto-close stale sessions, daily reports)
+- Email/notifications (optional): Nodemailer
+- Frontend: React (Vite) + TailwindCSS + Recharts/Chart.js for analytics
+  charts + Socket.IO client
+- Deployment: Render/Railway/AWS EC2 for API, MongoDB Atlas for DB, Vercel/
+  Netlify for frontend, or a single VPS with PM2 + Nginx reverse proxy for
+  everything if you need a self-contained cloud deployment for defense.
+
+0.3 Repository structure
+-------------------------
+/cloud-lab-monitoring
+  /server                     (Node/Express API + Socket.IO)
+    /src
+      /config       (db.js, env.js, socket.js)
+      /models       (Mongoose schemas)
+      /controllers
+      /routes
+      /middleware   (auth.js, roleCheck.js, errorHandler.js)
+      /services     (sessionService.js, policyEngine.js, alertService.js,
+                     reportService.js)
+      /sockets      (agentHandlers.js, dashboardHandlers.js)
+      /jobs         (cronJobs.js)
+      /utils
+      app.js
+      server.js
+    package.json
+  /agent                      (runs on every lab PC)
+    /src
+      collectors    (systemInfo.js, processMonitor.js, usbMonitor.js,
+                     screenshotService.js [optional])
+      socketClient.js
+      commandHandler.js
+      index.js
+    package.json
+  /dashboard                   (React admin/technician/lecturer UI)
+    /src
+      /pages (Login, LabOverview, MachineDetail, Attendance, Policies,
+              Reports, UserManagement)
+      /components
+      /context (AuthContext, SocketContext)
+      /services (api.js, socket.js)
+    package.json
+  README.md
+
+================================================================================
+PART 1 — DATA MODELS (MongoDB / Mongoose)
+================================================================================
+
+1.1 User (Admin / Technician / Lecturer)
+-----------------------------------------
+  fullName, staffId, email, passwordHash, role: enum['admin','technician',
+  'lecturer'], assignedLabs: [ObjectId ref Lab], isActive, lastLogin,
+  createdAt
+
+1.2 Student
+------------
+  fullName, matricNumber, department, level, faceOrCardId (optional, for
+  future biometric/RFID extension), createdAt
+
+1.3 Laboratory
+---------------
+  name, location, capacity (number of machines), technicianInCharge: ObjectId
+  ref User, createdAt
+
+1.4 Machine
+------------
+  labId: ref Laboratory, machineTag (e.g. "LAB1-PC07"), hostname, macAddress,
+  ipAddress (last known), status: enum['online','offline','locked','in-use',
+  'idle','fault'], os, agentVersion, lastHeartbeat: Date, specs: {cpu, ram,
+  disk}, createdAt
+
+1.5 Session
+------------
+  machineId: ref Machine, studentId: ref Student (nullable if guest login),
+  loginMethod: enum['matric','guest','staff'], startTime, endTime,
+  durationSeconds, status: enum['active','ended','forcefully-terminated'],
+  purpose/courseCode (optional), createdAt
+
+1.6 AttendanceRecord
+----------------------
+  sessionId: ref Session, studentId: ref Student, labId: ref Laboratory,
+  date, checkInTime, checkOutTime, verifiedBy: enum['system','manual'],
+  status: enum['present','left-early','no-checkout']
+
+1.7 Telemetry (time-series — use MongoDB time-series collection)
+--------------------------------------------------------------------
+  machineId, timestamp, cpuUsagePercent, ramUsagePercent, diskUsagePercent,
+  foregroundApp, networkUpKbps, networkDownKbps, uptimeSeconds
+
+1.8 Policy
+-----------
+  name, description, type: enum['blocked-app','blocked-website',
+  'usb-restriction','time-restriction','idle-timeout'], rule: {appName /
+  processName / usbClass / allowedHoursStart / allowedHoursEnd /
+  idleMinutes}, severity: enum['low','medium','high'], appliesToLabs:
+  [ObjectId ref Lab] (empty = global), isActive, createdBy: ref User
+
+1.9 ViolationLog / Alert
+--------------------------
+  machineId, sessionId (nullable), policyId: ref Policy, type
+  (matches Policy.type), detail (e.g. process name "cheatengine.exe" or
+  "USB storage device connected"), severity, status: enum['open',
+  'acknowledged','resolved'], detectedAt, acknowledgedBy, resolvedAt
+
+1.10 RemoteCommandLog
+-----------------------
+  machineId, issuedBy: ref User, commandType: enum['lock','unlock',
+  'message','shutdown','restart','logout-session','broadcast'], payload
+  (e.g. message text), status: enum['pending','delivered','executed',
+  'failed'], issuedAt, executedAt
+
+1.11 AuditLog (for accountability/security requirement)
+-----------------------------------------------------------
+  actorId: ref User, action, targetType, targetId, ipAddress, timestamp
+
+================================================================================
+PART 2 — AUTHENTICATION & ROLE-BASED ACCESS CONTROL
+================================================================================
+
+2.1 Endpoints
+  POST /api/auth/register        (admin only, creates technician/lecturer)
+  POST /api/auth/login           -> returns access + refresh JWT
+  POST /api/auth/refresh
+  POST /api/auth/logout
+  GET  /api/auth/me
+
+2.2 Middleware
+  - `authenticate` — verifies JWT, attaches req.user
+  - `authorize(...roles)` — restricts route by role
+  - Admin: full CRUD on labs, machines, users, policies
+  - Technician: view/manage assigned labs only, send remote commands,
+    acknowledge alerts
+  - Lecturer: read-only dashboard + attendance export for their
+    course/lab sessions
+
+2.3 Edge cases to capture
+  - Locked-out account after N failed logins (rate limiting w/ express-rate-
+    limit)
+  - Password reset flow (email token, expiring in 15 min)
+  - Session/token expiry handling on dashboard (silent refresh)
+  - Technician removed from a lab mid-session -> revoke real-time access to
+    that lab's socket room immediately
+
+================================================================================
+PART 3 — SESSION MANAGER (student login/logout on lab PCs)
+================================================================================
+
+3.1 Flow
+  1. Student sits at a machine; a lightweight LOGIN SCREEN (Electron kiosk
+     app or browser kiosk page served locally by the agent) asks for
+     Matric Number (+ optional PIN) or Guest mode.
+  2. Agent posts to `POST /api/sessions/start` with {machineId,
+     matricNumber}.
+  3. Server validates student exists (or auto-creates a guest record),
+     creates a Session doc (status: active), updates Machine.status =
+     'in-use', creates an AttendanceRecord (checkInTime = now).
+  4. Server emits `session:started` to the lab's Socket.IO room so the
+     dashboard updates live.
+  5. On logout (explicit action, OS logoff detected by agent, or idle-
+     timeout policy triggered): agent posts `POST /api/sessions/:id/end`.
+     Server sets endTime, computes durationSeconds, status='ended',
+     Machine.status='online', AttendanceRecord.checkOutTime = now.
+  6. If the agent disconnects unexpectedly (crash/power loss) without
+     ending the session: a scheduled job (node-cron, every 5 min) finds
+     sessions whose machine's lastHeartbeat is older than a threshold and
+     auto-closes them as status='forcefully-terminated', flags
+     AttendanceRecord.status='no-checkout'.
+
+3.2 Edge cases to capture
+  - Two students trying to log into the same machine simultaneously
+    (reject second until first session ends)
+  - Student logs into two machines at once (allow but flag as anomaly /
+    optionally restrict via policy)
+  - Guest sessions (no matric number) — track separately, exclude from
+    attendance
+  - Multiple courses per lab timetable — allow attaching a courseCode to a
+    session for accurate attendance-per-class reporting
+  - Network drop mid-session — agent buffers events locally and syncs on
+    reconnect (queue-and-retry pattern)
+
+================================================================================
+PART 4 — REAL-TIME MONITORING ENGINE
+================================================================================
+
+4.1 Agent-side collectors (run every 5–15 seconds, configurable)
+  - CPU / RAM / Disk usage via `systeminformation`
+  - Foreground/active application via `active-win`
+  - Network throughput
+  - Machine heartbeat (lightweight ping every 10s, separate from full
+    telemetry to keep bandwidth low)
+
+4.2 Transport
+  - Agent connects to server via Socket.IO on startup, joins room
+    `lab:<labId>`
+  - Emits `telemetry:update` payload every interval
+  - Server writes to MongoDB time-series `Telemetry` collection AND
+    re-broadcasts a trimmed payload to `dashboard:lab:<labId>` room for
+    live UI updates (avoid writing every single tick to DB if volume is
+    high — batch insert every 30–60s, or downsample)
+
+4.3 Dashboard view
+  - Grid of machine tiles per lab: color-coded status (green=in-use,
+    grey=offline, red=fault/violation, yellow=idle)
+  - Click a machine -> live CPU/RAM graph (last 30 min), current
+    foreground app, current session/student info
+
+4.4 Edge cases to capture
+  - Agent installed but machine has no active student session (idle
+    monitoring still runs — useful for detecting a machine left on
+    overnight)
+  - Machine goes offline uncleanly -> mark 'offline' after missing 3
+    consecutive heartbeats (~30s), do NOT immediately flag as fault;
+    escalate to 'fault' only if offline > configurable threshold (e.g. 10
+    min) during scheduled lab hours
+  - High telemetry volume across dozens of machines -> use Socket.IO
+    rooms so dashboard clients only receive updates for the lab they're
+    viewing, not the whole system
+
+================================================================================
+PART 5 — ACCESS CONTROL & POLICY ENGINE
+================================================================================
+
+5.1 Policy types to implement (map to your abstract's "prohibited
+    application use" and "unauthorised USB device connection")
+  a) Blocked application/process — agent's process monitor compares running
+     processes against Policy list every scan interval; on match, agent
+     can auto-kill the process (optional, needs admin rights) and always
+     reports a violation event.
+  b) Blocked website (optional stretch goal) — requires a browser
+     extension or DNS-level filtering; can be simulated by checking
+     browser window titles via `active-win` for known domains.
+  c) USB restriction — `usb-detection` package fires insert/remove
+     events; agent checks device class against policy (e.g. block USB
+     mass storage but allow keyboard/mouse) and reports violation +
+     optionally can programmatically disable the USB port via a
+     Windows Group Policy/registry call executed by the agent (document
+     this requires elevated privileges).
+  d) Time restriction — lab only usable within configured hours; agent
+     enforces local lockout outside window (or server pre-emptively
+     revokes login capability).
+  e) Idle timeout — no keyboard/mouse activity (use a Node idle-detection
+     lib or Windows API call) for N minutes auto-ends session.
+
+5.2 Flow
+  1. Server maintains master Policy list; on agent connect (or policy
+     change), server pushes current applicable policies to that machine
+     via `policy:sync` socket event, and agent caches them locally so it
+     still enforces basic rules if briefly offline.
+  2. Agent detects a violation locally -> emits `violation:report` with
+     {machineId, sessionId, policyId, detail, timestamp}.
+  3. Server creates a ViolationLog, sets severity from Policy, emits
+     `alert:new` to dashboard rooms (technician + admin), optionally
+     sends email/SMS for 'high' severity.
+  4. Technician can acknowledge/resolve from dashboard -> PATCH
+     `/api/alerts/:id`.
+
+5.3 Edge cases to capture
+  - Duplicate violation spam (same app re-detected every scan) -> debounce:
+    only log a new ViolationLog if the same policy+machine hasn't already
+    an 'open' entry within the last N minutes; otherwise just bump a
+    `occurrenceCount` field.
+  - Policy conflicts (an app both explicitly allowed and globally blocked)
+    -> most-specific-wins rule (lab-specific policy overrides global).
+  - False positive handling — allow technician to whitelist a process per
+    machine/lab on the fly.
+
+================================================================================
+PART 6 — REMOTE COMMAND DISPATCHER
+================================================================================
+
+6.1 Supported commands (from your abstract: locking, unlocking,
+    messaging, broadcasting)
+  - lock  (single machine)
+  - unlock (single machine)
+  - send message / pop-up notification (single machine)
+  - broadcast message (whole lab or whole system)
+  - shutdown / restart (single machine or lab-wide, admin only,
+    confirmation required)
+  - force-logout (end a session remotely)
+
+6.2 Flow
+  1. Technician/Admin issues command from dashboard -> `POST
+     /api/commands` {machineId or labId, commandType, payload}.
+  2. Server creates RemoteCommandLog(status='pending'), emits
+     `command:execute` to the specific machine's socket (or to all
+     sockets in `lab:<labId>` room for broadcast).
+  3. Agent executes locally (e.g. show full-screen "soft lock" overlay
+     with unlock requiring server-issued unlock signal; display toast/
+     modal for messages), then emits `command:ack` with success/failure.
+  4. Server updates RemoteCommandLog status to 'executed' or 'failed' and
+     notifies the dashboard.
+
+6.3 Edge cases to capture
+  - Command sent to an offline machine -> queue it (status stays
+    'pending'); when the machine reconnects, server flushes queued
+    commands, or expires them after a configurable TTL and marks
+    'failed'.
+  - Broadcast to 40 machines at once -> use Socket.IO room emit (single
+    call, fans out server-side) rather than looping HTTP calls.
+  - Unauthorized command attempt (a lecturer account trying to shutdown a
+    machine) -> blocked by `authorize()` middleware + logged to
+    AuditLog as a security event.
+  - Race condition: technician sends 'unlock' while agent is mid-executing
+    a 'lock' -> agent processes commands strictly in the order received
+    (single command queue in agent).
+
+================================================================================
+PART 7 — ATTENDANCE LOGGER & REPORTING/ANALYTICS ENGINE
+================================================================================
+
+7.1 Attendance
+  - Auto-derived from Session start/end (see Part 3) — no separate manual
+    step needed, but allow technician manual override/correction (e.g.
+    fixing a 'no-checkout' record) with an audit trail of who edited it.
+  - Endpoint: `GET /api/attendance?labId=&date=&courseCode=` returns
+    student list with check-in/out times & duration
+  - Export to CSV/PDF: `GET /api/attendance/export?format=csv|pdf`
+
+7.2 Reporting & Analytics engine
+  - Dashboard summary cards: total machines, machines online now, active
+    sessions, open violations today, average lab utilization %
+  - Usage-over-time chart per lab (sessions per hour/day)
+  - Most-used machines / least-used machines (helps allocate maintenance)
+  - Violation trend chart (by type, by lab, over time)
+  - Attendance-vs-timetable comparison (optional, if you model
+    timetabled classes)
+  - Scheduled report job (node-cron, e.g. daily at 11:59pm) that compiles
+    a summary document and emails it to admins/lecturers (Nodemailer)
+
+7.3 Edge cases to capture
+  - Report requested for a date range with no data -> return empty
+    structured response, not an error
+  - Very large export (a full semester) -> stream CSV generation instead
+    of building the whole string in memory (use `fast-csv` streaming)
+  - Timezone consistency — store all timestamps in UTC in MongoDB, convert
+    to local (Africa/Lagos) only at the presentation layer
+
+================================================================================
+PART 8 — LIGHTWEIGHT MONITORING AGENT (per lab PC)
+================================================================================
+
+8.1 Responsibilities
+  - Register itself with the server on first run (machineTag, hostname,
+    MAC address) -> `POST /api/machines/register`
+  - Maintain persistent Socket.IO connection; auto-reconnect with
+    exponential backoff if the network drops
+  - Run the login kiosk screen (or hook into Windows login events if you
+    want true OS-level session capture — more advanced, optional stretch
+    goal)
+  - Collect and emit telemetry (Part 4)
+  - Enforce and report policies (Part 5)
+  - Receive and execute remote commands (Part 6)
+  - Buffer events locally (simple JSON queue file) when offline and flush
+    on reconnect, so no data is lost
+
+8.2 Packaging & deployment
+  - Package as a Windows service using `node-windows` so it starts on
+    boot without a logged-in user, OR run as an Electron app with a
+    system tray icon if you want a visible kiosk login screen.
+  - Provide a simple installer script (`install-agent.bat`) that copies
+    the agent, registers the Windows service, and stores the server URL +
+    a one-time machine registration token in a local `.env`.
+
+8.3 Edge cases to capture
+  - Agent's first run before the machine has been added to a Lab in the
+    system -> server auto-creates the Machine as 'unassigned' status,
+    technician assigns it to a lab later from dashboard.
+  - Server URL changes (moved to new host) -> agent config allows the
+    admin to push a config-update command that rewrites the local
+    connection settings.
+  - Duplicate machineTag conflict (two PCs registered with same tag) ->
+    server rejects registration with a clear error; agent shows it
+    locally for the technician to fix.
+
+================================================================================
+PART 9 — SOCKET.IO EVENT CONTRACT (reference for both agent & dashboard)
+================================================================================
+
+Agent -> Server
+  machine:register        {machineTag, hostname, macAddress, labId?}
+  heartbeat                {machineId, timestamp}
+  telemetry:update         {machineId, cpu, ram, disk, foregroundApp, ...}
+  session:start            {machineId, matricNumber}
+  session:end               {sessionId}
+  violation:report          {machineId, sessionId, policyType, detail}
+  command:ack                {commandId, status, message}
+
+Server -> Agent
+  policy:sync                [Policy...]
+  command:execute             {commandId, commandType, payload}
+  config:update                {serverUrl, heartbeatInterval, ...}
+
+Server -> Dashboard (per lab room)
+  machine:status-changed
+  session:started / session:ended
+  telemetry:live
+  alert:new / alert:updated
+  command:status-changed
+
+================================================================================
+PART 10 — SECURITY REQUIREMENTS
+================================================================================
+
+  - All agent<->server traffic over WSS/HTTPS in production
+  - Machine registration requires a pre-issued registration token (avoid
+    rogue devices joining the network)
+  - JWT secrets in environment variables, never hard-coded
+  - Rate-limit auth and command endpoints
+  - Input validation with `express-validator` or `zod` on every route
+  - Sanitize all data before MongoDB queries (Mongoose helps, but avoid
+    building raw queries from user input)
+  - AuditLog every admin/technician action for accountability
+    (matches your abstract's "improve accountability" claim)
+  - Role checks enforced server-side always, never trust the dashboard
+    alone
+
+================================================================================
+PART 11 — TESTING & EVALUATION PLAN (to reproduce your abstract's results)
+================================================================================
+
+  1. Attendance accuracy test: run N simulated logins, compare system
+     records vs a manually kept ground-truth sheet -> compute % accuracy
+     (your abstract claims >98%).
+  2. Violation detection latency test: trigger a blocked app / USB insert
+     on a test machine, timestamp the local event vs the dashboard alert
+     timestamp -> compute detection latency (claim: within seconds).
+  3. Load test: simulate 40+ concurrent agent connections (can be done
+     with multiple lightweight Node.js mock-agent scripts) to verify
+     Socket.IO server + MongoDB writes hold up; use `autocannon` or
+     `artillery` for REST endpoint load testing.
+  4. Usability comparison: time a technician doing a manual walk-through
+     status check vs checking the dashboard -> compare against your
+     claimed "several minutes vs single glance" result.
+  5. Unit tests (Jest/Mocha + Supertest) for controllers/services; mock
+     MongoDB with `mongodb-memory-server`.
+
+================================================================================
+PART 12 — SUGGESTED BUILD ORDER (so you always have something runnable)
+================================================================================
+
+  Week 1: Auth + User/Lab/Machine models + basic Express API skeleton +
+          MongoDB connection + machine registration endpoint
+  Week 2: Session Manager (start/end) + Attendance auto-logging + basic
+          React dashboard listing machines/status
+  Week 3: Agent — telemetry collectors + Socket.IO connection + live
+          dashboard machine tiles
+  Week 4: Policy Engine — blocked app + USB detection + violation
+          alerts on dashboard
+  Week 5: Remote Command Dispatcher (lock/unlock/message/broadcast)
+  Week 6: Reporting & Analytics (charts, CSV/PDF export) + Audit logging
+  Week 7: Testing (Part 11), bug fixing, polish UI, write up results for
+          your project defense
+  Week 8: Buffer week — deployment to cloud (MongoDB Atlas + Render/VPS),
+          final documentation, screenshots for your project report
+
+================================================================================
+PART 13 — SAMPLE PROMPTS TO FEED AN AI CODING ASSISTANT MODULE-BY-MODULE
+================================================================================
+
+  "Using Node.js, Express, and Mongoose, generate the Mongoose schema and
+  CRUD controller/routes for the Machine model described below: [paste
+  section 1.4]. Include validation and role-based middleware so only
+  'admin' and 'technician' roles can create/update machines."
+
+  "Generate a Socket.IO server module (sockets/agentHandlers.js) that
+  handles the events listed in Part 9 under 'Agent -> Server', writes
+  telemetry to MongoDB in batches every 30 seconds, and re-broadcasts a
+  trimmed payload to the correct lab room."
+
+  "Generate the Node.js agent-side collector module using the
+  `systeminformation` and `active-win` packages that emits a
+  `telemetry:update` event every 10 seconds over an existing Socket.IO
+  client connection named `socket`."
+
+  "Generate an Express route + controller implementing the debounced
+  violation logging described in Part 5.3 (no duplicate open
+  ViolationLog for the same machine+policy within 5 minutes)."
+
+  Repeat this pattern for every module in Parts 3–8, pasting the relevant
+  section as context each time.
+
+================================================================================
+END OF FILE
+================================================================================
