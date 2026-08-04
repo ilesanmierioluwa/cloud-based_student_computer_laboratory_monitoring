@@ -332,19 +332,38 @@ or tabs.
     █ Grey   = offline (heartbeat lost)
     █ Yellow = locked / idle
     █ Red    = fault (offline too long during lab hours)
-  - Live CPU %, RAM %, and foreground app from each machine
-  - Click a machine card to open the command panel
+   - Live CPU %, RAM %, and foreground app from each machine
+   - Click a machine card to open the control panel
+
+  HOW TO MARK ATTENDANCE / START A SESSION (NEW):
+   1. Click any machine card
+   2. A modal pops up with TWO panels:
+      a) "Attendance / Session" panel (at the top)
+      b) "Remote Commands" panel (below)
+   3. In the Attendance/Session panel:
+      - Pick a student from the DROPDOWN (pre-populated from the
+        Students page — no typing needed)
+      - Course code and purpose are optional
+      - Click "Start Session (Mark Attendance)"
+   4. The system:
+      - Marks the machine as "in-use"
+      - Creates a Session with status "active"
+      - Logs the student's check-in attendance automatically
+   5. To end: click "End Session" in the same panel
+      - Records the check-out time on the attendance record
+      - Machine returns to "online"
+   6. While a session is active, the panel shows the student's name,
+      check-in time, and course instead of the start form.
 
   HOW TO SEND A REMOTE COMMAND:
-  1. Click any machine card
-  2. A modal pops up with command options
-  3. Type a message (for "message" command) — optional
-  4. Click the desired command:
-     - Send Message: Shows a pop-up on the lab PC
-     - Lock:        Locks the machine's screen
-     - Unlock:      Unlocks the screen
-     - Shutdown:    Shuts down the machine (admin only)
-     - Restart:     Restarts the machine
+   1. Click any machine card
+   2. In the "Remote Commands" panel, type a message (optional)
+   3. Click the desired command:
+      - Send Message: Shows a pop-up on the lab PC
+      - Lock:        Locks the machine's screen
+      - Unlock:      Unlocks the screen
+      - Shutdown:    Shuts down the machine (admin only)
+      - Restart:     Restarts the machine
 
   COMMAND STATUS INDICATORS:
   - pending:   Command is queued (machine is offline)
@@ -371,6 +390,15 @@ or tabs.
     → a cron job (every 5 minutes) auto-closes stale sessions
       and marks attendance as "no-checkout"
   - Admins/technicians can manually override records if needed
+
+  THREE WAYS TO START A SESSION (all produce the same attendance):
+  1. Dashboard:  click a machine card → pick a student from the
+                 dropdown → "Start Session (Mark Attendance)"
+  2. PC kiosk:   student types their matric number on the lab PC's
+                 kiosk screen (http://<pc-address>:3001)
+  3. API:        POST /api/sessions/start (with agent token) or
+                 POST /api/sessions/dashboard/start (with admin/tech
+                 token)
 
   HOW TO EXPORT ATTENDANCE:
   1. Filter by lab and/or date
@@ -637,13 +665,17 @@ fits into it.
 
   To demonstrate the full student flow live:
     1. Register a few students on the Students page first.
-    2. Start a session from the agent/terminal with one of their
-       matric numbers:
-         POST /api/sessions/start
-         { "machineId": "<machine_id>", "matricNumber": "CSC/2020/001" }
+    2. Start a session with one of them — EITHER:
+       a) From the dashboard: click the machine card → pick the
+          student from the dropdown → "Start Session (Mark Attendance)"
+       b) From the PC kiosk: open http://localhost:3001 on the lab PC
+          and type the student's matric number
+       c) From the terminal: POST /api/sessions/start with the agent
+          token
     3. Open the Attendance page → the check-in appears instantly with
        the student's real name.
-    4. End the session → check-out and duration appear.
+    4. End the session (dashboard "End Session" button / kiosk) →
+       check-out and duration appear.
     5. Export the attendance to CSV/PDF to show the lecturer output.
 
 
@@ -738,28 +770,54 @@ the REST API directly (useful for testing or bulk import).
 
 --------------------------------------------------------------------------------
 8.5 Starting a Student Session
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
-  In production, the Agent handles this (a login kiosk on each PC).
-  For testing, use the API:
+  There are THREE ways to start a session — all create the same
+  Session + Attendance records:
 
-    POST /api/sessions/start
-    Headers: x-agent-token: agent-registration-token-default-change-me
-    Body: {
-      "machineId": "<machine_mongo_id>",
-      "matricNumber": "CSC/2020/001",
-      "courseCode": "CSC401",
-      "purpose": "Programming assignment"
-    }
+  METHOD 1 — DASHBOARD (recommended, no typing):
+    Machines page → click a machine card → Attendance/Session panel
+    → pick a student from the dropdown → "Start Session (Mark
+    Attendance)".
+    API behind it:
+      POST /api/sessions/dashboard/start
+      Headers: Authorization: Bearer <admin-or-technician-token>
+      Body: {
+        "machineId": "<machine_mongo_id>",
+        "matricNumber": "CSC/2020/001",
+        "courseCode": "CSC401",
+        "purpose": "Programming assignment"
+      }
 
-  What happens automatically:
+  METHOD 2 — PC KIOSK (student self-service):
+    The agent serves a login page at http://<pc-address>:3001 where
+    the student types their matric number. The agent then calls:
+      POST /api/sessions/start
+      Headers: x-agent-token: agent-registration-token-default-change-me
+      Body: {
+        "machineId": "<machine_mongo_id>",
+        "matricNumber": "CSC/2020/001",
+        "courseCode": "CSC401",
+        "purpose": "Programming assignment"
+      }
+
+  METHOD 3 — TERMINAL (testing):
+    Use the same POST /api/sessions/start call as Method 2 with curl.
+
+  What happens automatically (all methods):
   1. Student is found or created
   2. Session document is created (status: active)
   3. Machine status changes to "in-use"
   4. Attendance record is created (checkInTime = now)
   5. Dashboard is updated in real-time via Socket.IO
 
-  Ending a session (API):
+  Ending a session:
+
+  Dashboard (admin/technician):
+    POST /api/sessions/dashboard/:sessionId/end
+    Headers: Authorization: Bearer <token>
+
+  Agent / kiosk / terminal:
     POST /api/sessions/:sessionId/end
     Headers: x-agent-token: agent-registration-token-default-change-me
 
@@ -834,7 +892,22 @@ The agent is the software installed on each lab computer. It:
   - Checks running processes against blocked-app policies
   - Monitors USB insert/remove events
   - Listens for and executes remote commands (lock, message, etc.)
+  - Serves a SELF-SERVICE KIOSK page (see below) for student logins
   - Buffers data locally if the network drops and syncs on reconnect
+
+  THE KIOSK (student self-service login screen):
+    The agent also runs a small web server (port 3001 by default,
+    set via KIOSK_PORT in agent/.env) that serves a login page at:
+
+        http://<pc-address>:3001
+
+    A student opens that page, types their matric number, and clicks
+    "Start Session". The agent calls POST /api/sessions/start, which
+    creates the session + attendance record and marks the machine
+    "in-use". The student clicks "End Session" to check out.
+
+    The kiosk page shows a live timer, the active student, and the
+    machine's connection status. It polls the backend every 3 seconds.
 
   HOW TO INSTALL THE AGENT (on a lab PC):
 
