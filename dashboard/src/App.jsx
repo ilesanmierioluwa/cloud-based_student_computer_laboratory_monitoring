@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import LabOverview from './pages/LabOverview'
 import MachineDetail from './pages/MachineDetail'
 import AttendancePage from './pages/AttendancePage'
+import Students from './pages/Students'
 import Policies from './pages/Policies'
 import Violations from './pages/Violations'
 import Reports from './pages/Reports'
@@ -31,6 +32,7 @@ function App() {
                 <Route path="/labs" element={<LabOverview />} />
                 <Route path="/machines" element={<MachineDetail />} />
                 <Route path="/attendance" element={<AttendancePage />} />
+                <Route path="/students" element={<Students />} />
                 <Route path="/policies" element={<Policies />} />
                 <Route path="/violations" element={<Violations />} />
                 <Route path="/reports" element={<Reports />} />

@@ -19,6 +19,7 @@ export default function Layout({ children }) {
           <Link to="/labs" style={styles.link}>Labs</Link>
           <Link to="/machines" style={styles.link}>Machines</Link>
           <Link to="/attendance" style={styles.link}>Attendance</Link>
+          <Link to="/students" style={styles.link}>Students</Link>
           <Link to="/policies" style={styles.link}>Policies</Link>
           {(user?.role === 'admin' || user?.role === 'technician') && <Link to="/violations" style={styles.link}>Violations</Link>}
           <Link to="/reports" style={styles.link}>Reports</Link>
