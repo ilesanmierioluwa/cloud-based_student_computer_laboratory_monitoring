@@ -5,6 +5,7 @@ import { getSocket, connectSocket } from '../services/socket';
 export default function MachineDetail() {
   const [machines, setMachines] = useState([]);
   const [labs, setLabs] = useState([]);
+  const [students, setStudents] = useState([]);
   const [labFilter, setLabFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [telemetry, setTelemetry] = useState({});
@@ -12,7 +13,7 @@ export default function MachineDetail() {
   const [commandPayload, setCommandPayload] = useState({ message: '' });
   const [activeSession, setActiveSession] = useState(null);
   const [sessionLoading, setSessionLoading] = useState(false);
-  const [sessionForm, setSessionForm] = useState({ matricNumber: '', courseCode: '', purpose: '' });
+  const [sessionForm, setSessionForm] = useState({ studentId: '', courseCode: '', purpose: '' });
 
   const loadActiveSession = useCallback(async (machine) => {
     if (!machine) return;
@@ -31,6 +32,7 @@ export default function MachineDetail() {
 
   useEffect(() => {
     api.get('/labs').then((res) => setLabs(res.data.labs || [])).catch(() => {});
+    api.get('/students').then((res) => setStudents(res.data.students || [])).catch(() => {});
     loadMachines();
 
     const socket = connectSocket();
@@ -70,20 +72,21 @@ export default function MachineDetail() {
   };
 
   const startSession = async () => {
-    if (!sessionForm.matricNumber.trim()) {
-      alert('Enter a matric number');
+    if (!sessionForm.studentId) {
+      alert('Select a student');
       return;
     }
     setSessionLoading(true);
     try {
+      const student = students.find((s) => s._id === sessionForm.studentId);
       await api.post('/sessions/dashboard/start', {
         machineId: selectedMachine._id,
-        matricNumber: sessionForm.matricNumber.trim(),
+        matricNumber: student?.matricNumber,
         courseCode: sessionForm.courseCode.trim() || undefined,
         purpose: sessionForm.purpose.trim() || undefined,
       });
       alert('Session started — attendance recorded');
-      setSessionForm({ matricNumber: '', courseCode: '', purpose: '' });
+      setSessionForm({ studentId: '', courseCode: '', purpose: '' });
       loadActiveSession(selectedMachine);
     } catch (err) {
       alert('Failed: ' + (err.response?.data?.error || err.message));
@@ -159,12 +162,19 @@ export default function MachineDetail() {
                 </div>
               ) : (
                 <div>
-                  <input
-                    placeholder="Matric number (e.g. 21CSC101)"
-                    value={sessionForm.matricNumber}
-                    onChange={(e) => setSessionForm({ ...sessionForm, matricNumber: e.target.value })}
+                  <label style={styles.fieldLabel}>Student</label>
+                  <select
+                    value={sessionForm.studentId}
+                    onChange={(e) => setSessionForm({ ...sessionForm, studentId: e.target.value })}
                     style={styles.input}
-                  />
+                  >
+                    <option value="">— Select student —</option>
+                    {students.map((s) => (
+                      <option key={s._id} value={s._id}>
+                        {s.fullName} ({s.matricNumber})
+                      </option>
+                    ))}
+                  </select>
                   <input
                     placeholder="Course code (optional)"
                     value={sessionForm.courseCode}
@@ -225,4 +235,5 @@ const styles = {
   sessionDetail: { fontSize: '12px', color: '#6b7280', marginTop: '4px' },
   startBtn: { padding: '10px 14px', background: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', width: '100%', fontWeight: '600' },
   endBtn: { padding: '10px 14px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', width: '100%', marginTop: '10px', fontWeight: '600' },
+  fieldLabel: { display: 'block', fontSize: '12px', color: '#6b7280', marginBottom: '6px' },
 };
