@@ -27,17 +27,23 @@ TABLE OF CONTENTS
      6.6  Violations
      6.7  Reports
      6.8  User Management
-  7. HOW TO ADD MORE DATA
-     7.1  Adding a Technician or Lecturer
-     7.2  Adding a Laboratory
-     7.3  Adding a Machine
-     7.4  Adding a Student
-     7.5  Starting a Student Session
-     7.6  Creating a Policy
-  8. REAL-TIME FEATURES
-  9. THE MONITORING AGENT (For Lab PCs)
-  10. SECURITY
-  11. TROUBLESHOOTING
+     6.9  Students
+  7. STUDENT FLOW (How students use the lab and how it's tracked)
+     7.1  The student's journey step-by-step
+     7.2  The Students page (pre-registration & correction)
+     7.3  Student flow quick reference table
+     7.4  Live demo tip for your defense
+  8. HOW TO ADD MORE DATA
+     8.1  Adding a Technician or Lecturer
+     8.2  Adding a Laboratory
+     8.3  Adding a Machine
+     8.4  Adding a Student
+     8.5  Starting a Student Session
+     8.6  Creating a Policy
+  9. REAL-TIME FEATURES
+  10. THE MONITORING AGENT (For Lab PCs)
+  11. SECURITY
+  12. TROUBLESHOOTING
 
 
 ================================================================================
@@ -493,14 +499,163 @@ or tabs.
 
 
 ================================================================================
-7. HOW TO ADD MORE DATA
+7. STUDENT FLOW (How students use the lab and how it's tracked)
+================================================================================
+
+This section explains the full journey of a student from sitting down at
+a lab PC to their attendance being recorded — and how the Students page
+fits into it.
+
+--------------------------------------------------------------------------------
+7.1 The student's journey step-by-step
+--------------------------------------------------------------------------------
+
+  STEP 1 — Student arrives at a lab PC
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    The agent on that PC shows a login screen asking for the student's
+    Matric Number (or a Guest mode for visitors without matric numbers).
+
+  STEP 2 — Session starts automatically
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    When the student enters their matric number, the agent calls
+      POST /api/sessions/start
+      Body: { "machineId": "...", "matricNumber": "CSC/2020/001" }
+
+    The system then does the following automatically:
+      1. If the matric number is NEW → a Student record is auto-created
+         (no manual entry needed).
+      2. If the matric number already exists → the existing record is
+         reused.
+      3. A Session is created with status = "active".
+      4. The Machine status changes to "in-use".
+      5. An AttendanceRecord is created (checkInTime = now).
+      6. The dashboard updates in real-time via Socket.IO.
+
+  STEP 3 — During the session (monitoring)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    - The agent keeps streaming telemetry (CPU/RAM/foreground app) so
+      the technician can see what the student is doing.
+    - Active policies apply: if the student opens a blocked app or
+      plugs in an unauthorized USB device, a violation alert fires
+      on the dashboard in real-time.
+
+  STEP 4 — Student logs out
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    The agent calls
+      POST /api/sessions/:sessionId/end
+
+    The system then does the following automatically:
+      1. The session gets an endTime and durationSeconds.
+      2. The Machine status changes back to "online".
+      3. The AttendanceRecord gets a checkOutTime.
+      4. The dashboard updates in real-time.
+
+    That's it — attendance is recorded FULLY AUTOMATICALLY. There is
+    no manual register to fill.
+
+  STEP 5 — Crash / power loss (edge case)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    If the PC loses power or the agent crashes mid-session, a scheduled
+    job (runs every 5 minutes) detects the machine has stopped sending
+    heartbeats and:
+      1. Auto-closes the stale session as "forcefully-terminated".
+      2. Marks the AttendanceRecord as "no-checkout".
+    This prevents forever-open sessions when a student just walks away
+    or the PC is switched off unexpectedly.
+
+--------------------------------------------------------------------------------
+7.2 The Students page (pre-registration & correction)
+--------------------------------------------------------------------------------
+
+  The Students page (nav bar → "Students") is for ADMIN and TECHNICIAN
+  staff. It is NOT required for attendance to work, but it helps in
+  two ways:
+
+  1. PRE-REGISTRATION
+     - Load a class list before a practical (e.g. add all 300-level
+       students with their names and departments).
+     - Then when those students log in, sessions instantly attach to
+       their real names instead of a placeholder.
+
+  2. CORRECTION & CLEANUP
+     - Edit a student's name, matric number, department, or level if
+       there's a typo.
+     - Delete wrong or duplicate records.
+
+  Lecturer accounts can VIEW the student list but cannot add, edit, or
+  delete students.
+
+  PAGE FEATURES:
+    - "Add Student" button → opens the creation form.
+    - "Edit" button per row → opens the form pre-filled for updating.
+    - "Delete" button per row → removes the student (with confirmation).
+    - Total student count shown above the table.
+    - Info banner explaining how students get added.
+
+  HOW TO ADD A STUDENT MANUALLY (UI):
+    1. Go to Students page.
+    2. Click "Add Student".
+    3. Fill in: Full Name, Matric Number, Department (optional), Level.
+    4. Click "Create Student".
+    5. The student appears in the table.
+
+  HOW TO ADD A STUDENT VIA API:
+    POST /api/students
+    Headers: Authorization: Bearer <token>
+    Body: {
+      "fullName": "Alice Johnson",
+      "matricNumber": "CSC/2021/015",
+      "department": "Computer Science",
+      "level": "300"
+    }
+
+--------------------------------------------------------------------------------
+7.3 Student flow quick reference table
+--------------------------------------------------------------------------------
+
+  ┌─────────────────────┬───────────────────────────────────────────────┐
+  │ Event               │ What happens automatically                    │
+  ├─────────────────────┼───────────────────────────────────────────────┤
+  │ Student logs in     │ Student auto-created (if new) + Session       │
+  │ (matric number)     │ "active" + Machine "in-use" + Attendance      │
+  │                     │ check-in logged                               │
+  ├─────────────────────┼───────────────────────────────────────────────┤
+  │ During session      │ Telemetry streamed + policies enforced,       │
+  │                     │ violations alert in real-time                 │
+  ├─────────────────────┼───────────────────────────────────────────────┤
+  │ Student logs out    │ Session ended + duration computed + Machine   │
+  │                     │ "online" + Attendance check-out logged        │
+  ├─────────────────────┼───────────────────────────────────────────────┤
+  │ PC crashes / power  │ Cron job auto-closes session as              │
+  │ loss                │ "forcefully-terminated", attendance marked    │
+  │                     │ "no-checkout"                                 │
+  └─────────────────────┴───────────────────────────────────────────────┘
+
+--------------------------------------------------------------------------------
+7.4 Live demo tip for your defense
+--------------------------------------------------------------------------------
+
+  To demonstrate the full student flow live:
+    1. Register a few students on the Students page first.
+    2. Start a session from the agent/terminal with one of their
+       matric numbers:
+         POST /api/sessions/start
+         { "machineId": "<machine_id>", "matricNumber": "CSC/2020/001" }
+    3. Open the Attendance page → the check-in appears instantly with
+       the student's real name.
+    4. End the session → check-out and duration appear.
+    5. Export the attendance to CSV/PDF to show the lecturer output.
+
+
+================================================================================
+8. HOW TO ADD MORE DATA
 ================================================================================
 
 All of the following can be done through the dashboard UI, or via
 the REST API directly (useful for testing or bulk import).
 
 --------------------------------------------------------------------------------
-7.1 Adding a Technician or Lecturer
+8.1 Adding a Technician or Lecturer
 --------------------------------------------------------------------------------
 
   UI Method:
@@ -520,7 +675,7 @@ the REST API directly (useful for testing or bulk import).
   The technician can now log in and manage their assigned labs.
 
 --------------------------------------------------------------------------------
-7.2 Adding a Laboratory
+8.2 Adding a Laboratory
 --------------------------------------------------------------------------------
 
   UI Method:
@@ -536,7 +691,7 @@ the REST API directly (useful for testing or bulk import).
     }
 
 --------------------------------------------------------------------------------
-7.3 Adding a Machine
+8.3 Adding a Machine
 --------------------------------------------------------------------------------
 
   Machines auto-register when the agent runs (recommended), but you
@@ -565,7 +720,7 @@ the REST API directly (useful for testing or bulk import).
   for sessions on that machine.
 
 --------------------------------------------------------------------------------
-7.4 Adding a Student
+8.4 Adding a Student
 --------------------------------------------------------------------------------
 
   Students are auto-created when a session starts with a new matric
@@ -582,7 +737,7 @@ the REST API directly (useful for testing or bulk import).
     }
 
 --------------------------------------------------------------------------------
-7.5 Starting a Student Session
+8.5 Starting a Student Session
 --------------------------------------------------------------------------------
 
   In production, the Agent handles this (a login kiosk on each PC).
@@ -622,7 +777,7 @@ the REST API directly (useful for testing or bulk import).
   attendance status to "left-early".
 
 --------------------------------------------------------------------------------
-7.6 Creating a Policy
+8.6 Creating a Policy
 --------------------------------------------------------------------------------
 
   API Method:
@@ -642,7 +797,7 @@ the REST API directly (useful for testing or bulk import).
 
 
 ================================================================================
-8. REAL-TIME FEATURES
+9. REAL-TIME FEATURES
 ================================================================================
 
 The dashboard uses Socket.IO to update without page refreshes:
@@ -667,7 +822,7 @@ The dashboard uses Socket.IO to update without page refreshes:
 
 
 ================================================================================
-9. THE MONITORING AGENT (For Lab PCs)
+10. THE MONITORING AGENT (For Lab PCs)
 ================================================================================
 
 The agent is the software installed on each lab computer. It:
@@ -711,7 +866,7 @@ The agent is the software installed on each lab computer. It:
 
 
 ================================================================================
-10. SECURITY
+11. SECURITY
 ================================================================================
 
   MEASURES IN PLACE:
@@ -744,7 +899,7 @@ The agent is the software installed on each lab computer. It:
 
 
 ================================================================================
-11. TROUBLESHOOTING
+12. TROUBLESHOOTING
 ================================================================================
 
   PROBLEM:  "MongoDB connection error" on server startup
@@ -824,7 +979,7 @@ PROJECT FILES REFERENCE
     src/App.jsx             — Route definitions
     src/context/            — AuthContext, SocketContext
     src/services/           — API client (axios), Socket client
-    src/pages/              — 8 page components
+    src/pages/              — 9 page components
     src/components/         — Layout, ProtectedRoute
 
 
