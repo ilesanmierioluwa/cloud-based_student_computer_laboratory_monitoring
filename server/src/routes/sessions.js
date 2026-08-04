@@ -7,6 +7,7 @@ const { auditLog } = require('../middleware/auditLog');
 
 // Agent-facing
 router.post('/start', agentAuth, sessionController.start);
+router.post('/status', agentAuth, sessionController.agentStatus);
 router.post('/:id/end', agentAuth, sessionController.end);
 
 // Dashboard-facing

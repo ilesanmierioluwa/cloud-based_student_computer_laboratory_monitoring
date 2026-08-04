@@ -6,6 +6,7 @@ const { getForegroundApp, getRunningProcesses } = require('./collectors/processM
 const { startListening, isMassStorage } = require('./collectors/usbMonitor');
 const { handlePolicySync, checkProcessAgainstPolicies, checkUSBDeviceAgainstPolicies, flushStaleViolations } = require('./collectors/policyEnforcer');
 const { handleCommand } = require('./commandHandler');
+const { startKiosk } = require('../kiosk/server');
 
 const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL, 10) || 10000;
 const TELEMETRY_INTERVAL = parseInt(process.env.TELEMETRY_INTERVAL, 10) || 15000;
@@ -48,6 +49,9 @@ const start = async () => {
       console.log(`[USB] Device removed`);
     }
   );
+
+  // Start self-service kiosk
+  startKiosk();
 
   // Cleanup on shutdown
   process.on('SIGINT', shutdown);

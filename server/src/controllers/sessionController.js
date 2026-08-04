@@ -125,6 +125,23 @@ exports.forceEnd = async (req, res, next) => {
   }
 };
 
+exports.agentStatus = async (req, res, next) => {
+  try {
+    const { machineId } = req.body;
+    const machine = await Machine.findById(machineId);
+    if (!machine) return res.status(404).json({ error: 'Machine not found' });
+
+    const session = await Session.findOne({ machineId, status: 'active' }).populate(
+      'studentId',
+      'fullName matricNumber'
+    );
+
+    res.json({ machine, session });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.getByMachine = async (req, res, next) => {
   try {
     const sessions = await Session.find({ machineId: req.params.machineId })

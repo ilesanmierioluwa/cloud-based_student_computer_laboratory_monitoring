@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lab Session Kiosk</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0b1220;
+      --panel: #131c2e;
+      --panel-2: #182338;
+      --border: #243352;
+      --text: #e6edf7;
+      --muted: #8fa3c2;
+      --accent: #22d3ee;
+      --accent-2: #3b82f6;
+      --green: #34d399;
+      --red: #f87171;
+      --amber: #fbbf24;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #16233f 0%, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 460px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 34px 30px;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    }
+
+    .brand { text-align: center; margin-bottom: 8px; }
+    .brand .logo {
+      width: 56px; height: 56px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 26px; font-weight: 700; color: #06202b;
+      margin-bottom: 12px;
+    }
+    .brand h1 { font-size: 19px; font-weight: 600; letter-spacing: 0.2px; }
+    .brand p { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+    .machine {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      margin: 18px 0 4px;
+      padding: 10px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-size: 13px; color: var(--muted);
+    }
+    .machine b { color: var(--text); font-weight: 600; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+    .dot.online { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .dot.offline { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+    .status-line { text-align: center; font-size: 13px; color: var(--muted); margin: 10px 0 20px; min-height: 18px; }
+    .status-line.err { color: var(--red); }
+
+    form { display: flex; flex-direction: column; gap: 14px; }
+    label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+    input {
+      width: 100%;
+      padding: 13px 14px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 15px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus { border-color: var(--accent); }
+    input::placeholder { color: #5c6f8f; }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    button {
+      margin-top: 6px;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.15s;
+    }
+    button:active { transform: scale(0.98); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-start { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #04121c; }
+    .btn-end { background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; }
+    .btn-ghost { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+
+    /* Active session view */
+    .session-info { text-align: center; }
+    .avatar {
+      width: 70px; height: 70px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--green), #10b981);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 28px; font-weight: 700; color: #06210f;
+      margin: 6px 0 14px;
+    }
+    .session-info .matric {
+      font-size: 22px; font-weight: 700; letter-spacing: 0.5px;
+    }
+    .session-info .detail { color: var(--muted); font-size: 14px; margin-top: 6px; }
+    .timer { font-size: 40px; font-weight: 700; color: var(--accent); margin: 16px 0 6px; font-variant-numeric: tabular-nums; }
+    .timer-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+
+    .footer { text-align: center; color: #4e6182; font-size: 11px; margin-top: 22px; }
+
+    .hidden { display: none !important; }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      display: inline-block;
+      animation: spin 0.7s linear infinite;
+      vertical-align: -3px;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="logo">CL</div>
+      <h1>Computer Laboratory Session</h1>
+      <p>Cloud-Based Student Computer Laboratory Monitoring</p>
+    </div>
+
+    <div class="machine">
+      <span class="dot" id="statusDot"></span>
+      <span>Machine: <b id="machineTag">...</b></span>
+    </div>
+
+    <div class="status-line" id="statusLine">Checking server connection…</div>
+
+    <!-- IDLE VIEW -->
+    <div id="idleView">
+      <form id="startForm" autocomplete="off">
+        <div>
+          <label for="matric">Matriculation Number</label>
+          <input id="matric" name="matric" placeholder="e.g. 21CSC101" required autocomplete="off" />
+        </div>
+        <div class="row">
+          <div>
+            <label for="course">Course Code (optional)</label>
+            <input id="course" name="course" placeholder="e.g. CSC401" autocomplete="off" />
+          </div>
+          <div>
+            <label for="purpose">Purpose (optional)</label>
+            <input id="purpose" name="purpose" placeholder="e.g. Assignment" autocomplete="off" />
+          </div>
+        </div>
+        <button type="submit" class="btn-start" id="startBtn">
+          <span class="spinner hidden" id="startSpinner"></span>
+          <span id="startBtnText">Start Session</span>
+        </button>
+      </form>
+    </div>
+
+    <!-- ACTIVE VIEW -->
+    <div id="activeView" class="hidden">
+      <div class="session-info">
+        <div class="avatar" id="avatar">?</div>
+        <div class="matric" id="activeMatric">—</div>
+        <div class="detail">Checked in at <b id="checkInTime">—</b></div>
+        <div class="detail" id="courseInfo"></div>
+        <div class="timer" id="timer">00:00:00</div>
+        <div class="timer-label">Session Duration</div>
+      </div>
+      <button class="btn-end" id="endBtn" style="width:100%;">
+        <span class="spinner hidden" id="endSpinner"></span>
+        <span id="endBtnText">End Session</span>
+      </button>
+    </div>
+
+    <div class="footer">Cloud-Based Student Computer Laboratory Monitoring System</div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const POLL_MS = 3000;
+    let timerInterval = null;
+
+    function formatTime(d) {
+      if (!d) return '—';
+      return new Date(d).toLocaleString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function formatDuration(ms) {
+      const s = Math.floor(ms / 1000);
+      const h = String(Math.floor(s / 3600)).padStart(2, '0');
+      const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+      const sec = String(s % 60).padStart(2, '0');
+      return `${h}:${m}:${sec}`;
+    }
+
+    function setStatus(msg, isErr) {
+      const el = $('statusLine');
+      el.textContent = msg || '';
+      el.classList.toggle('err', Boolean(isErr));
+    }
+
+    function setDot(online) {
+      $('statusDot').className = 'dot ' + (online ? 'online' : 'offline');
+    }
+
+    function showView(active) {
+      $('idleView').classList.toggle('hidden', active);
+      $('activeView').classList.toggle('hidden', !active);
+      clearInterval(timerInterval);
+    }
+
+    function startTimer(checkIn) {
+      clearInterval(timerInterval);
+      const tick = () => {
+        $('timer').textContent = formatDuration(Date.now() - new Date(checkIn).getTime());
+      };
+      tick();
+      timerInterval = setInterval(tick, 1000);
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        $('machineTag').textContent = data.machineTag || 'UNKNOWN';
+
+        if (!data.online) {
+          setDot(false);
+          setStatus('Not connected to monitoring server');
+          showView(false);
+          return;
+        }
+
+        setDot(true);
+
+        if (data.error) {
+          setStatus('Server error: ' + data.error, true);
+          showView(false);
+          return;
+        }
+
+        if (data.session) {
+          const s = data.session;
+          const student = s.studentId || {};
+          showView(true);
+          $('avatar').textContent = (student.fullName || student.matricNumber || '?').charAt(0).toUpperCase();
+          $('activeMatric').textContent = student.matricNumber || 'Guest';
+          $('checkInTime').textContent = formatTime(s.startTime);
+          $('courseInfo').textContent = [s.courseCode, s.purpose].filter(Boolean).join(' · ');
+          startTimer(s.startTime);
+          setStatus('Session in progress');
+        } else {
+          showView(false);
+          setStatus('Ready — enter your matric number to start');
+        }
+      } catch (e) {
+        setDot(false);
+        setStatus('Kiosk offline — cannot reach backend', true);
+        showView(false);
+      }
+    }
+
+    function setLoading(btn, spinner, text, loading) {
+      spinner.classList.toggle('hidden', !loading);
+      btn.disabled = loading;
+      if (!loading) return;
+      text.textContent = 'Working…';
+    }
+
+    function resetStartBtn() {
+      $('startSpinner').classList.add('hidden');
+      $('startBtn').disabled = false;
+      $('startBtnText').textContent = 'Start Session';
+    }
+
+    $('startForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      setLoading($('startBtn'), $('startSpinner'), $('startBtnText'), true);
+      setStatus('Starting session…');
+
+      try {
+        const res = await fetch('/api/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            matricNumber: $('matric').value.trim(),
+            courseCode: $('course').value.trim(),
+            purpose: $('purpose').value.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to start session');
+        $('matric').value = '';
+        $('course').value = '';
+        $('purpose').value = '';
+        setStatus('Session started successfully', false);
+        poll();
+      } catch (err) {
+        setStatus(err.message, true);
+      } finally {
+        resetStartBtn();
+      }
+    });
+
+    $('endBtn').addEventListener('click', async () => {
+      setLoading($('endBtn'), $('endSpinner'), $('endBtnText'), true);
+      setStatus('Ending session…');
+      try {
+        const res = await fetch('/api/end', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to end session');
+        setStatus('Session ended — attendance recorded. Thank you!', false);
+        poll();
+      } catch (err) {
+        setStatus(err.message, true);
+      } finally {
+        $('endSpinner').classList.add('hidden');
+        $('endBtn').disabled = false;
+        $('endBtnText').textContent = 'End Session';
+      }
+    });
+
+    poll();
+    setInterval(poll, POLL_MS);
+  </script>
+</body>
+</html>
